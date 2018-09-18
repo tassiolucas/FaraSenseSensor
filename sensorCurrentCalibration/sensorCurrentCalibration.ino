@@ -3,26 +3,27 @@
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
 
-#define portRead 36
-float ICAL = 90.90909090909091;
+#define portRead 34
+float ICAL = 9.090909090909090;
 double sampleI, offsetI, filteredI, sumI, sqI;
 int SupplyVoltage;
 double irms;
 float I_RATIO;
 
-double PASSA_BAIXA1 = 5.50;
-double PASSA_BAIXA2 = 22.47;
-
 void setup()
 {  
   Serial.begin(115200);
   emon1.current(36, ICAL);             // Current: input pin, calibration.
+  
 }
 
 void loop()
 {
   irms = calcIrms(4000);
   double irmsLib = calcIrmsLib();  // Calculate Irms only
+
+  Serial.print(" Entrada: ");
+  Serial.print(analogRead(portRead));
 
   Serial.print(" Wats: ");
   Serial.print(irms * 127);	       // Apparent power
@@ -49,7 +50,7 @@ void loop()
 }
 
 double calcIrmsLib() {
-    double irmsCalc = (emon1.calcIrms(1480) - PASSA_BAIXA2);
+    double irmsCalc = (emon1.calcIrms(1480));
     if (irmsCalc < 0) {
       return 0;
     } else { return irmsCalc; }
@@ -78,10 +79,12 @@ double calcIrms(unsigned int Number_of_Samples) {
     sqI = filteredI * filteredI;
     // 2) sum 
     sumI += sqI;
+
+    delay(0.05);
   }
   
   I_RATIO = ICAL * ((SupplyVoltage/1000.0) / (4096));
-  irmsCalc = (I_RATIO * sqrt(sumI / Number_of_Samples)) - 5.50; 
+  irmsCalc = (I_RATIO * sqrt(sumI / Number_of_Samples)); 
 
   //Reset accumulators
   sumI = 0;
@@ -119,11 +122,3 @@ long readVcc() {
   return (3300);                                  //Guess that other un-supported architectures will be running a 3.3V!
  #endif
 }
-
-// Wats: 2896.58 IRMS: 22.81
-// Wats: 2866.66 IRMS: 22.57
-// Wats: 2729.61 IRMS: 21.49
-// Wats: 2733.16 IRMS: 21.52
-// Wats: 2770.35 IRMS: 21.81
-// Wats: 2910.66 IRMS: 22.92
-// Wats: 2888.11 IRMS: 22.74
