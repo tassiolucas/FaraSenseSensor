@@ -1,7 +1,8 @@
-// EmonLibrary examples openenergymonitor.org, Licence GNU GPL V3
+// Código do Sensor 
 
 #include "EmonLib.h"                   // Include Emon Library
 EnergyMonitor emon1;                   // Create an instance
+#include <HTTPClient.h>
 
 #define portRead 34
 float ICAL = 9.090909090909090;
@@ -14,21 +15,34 @@ void setup()
 {  
   Serial.begin(115200);
   emon1.current(36, ICAL);             // Current: input pin, calibration.
-  
 }
 
 void loop()
 {
   irms = calcIrms(4000);
   double irmsLib = calcIrmsLib();  // Calculate Irms only
+  printAllValuesSensor(irms, irmsLib);
+}
 
+void apiRequest() {
+  
+}
+
+double calcIrmsLib() {
+    double irmsCalc = (emon1.calcIrms(1480));
+    if (irmsCalc < 0) {
+      return 0;
+    } else { return irmsCalc; }
+}
+
+void printAllValuesSensor(int irms, int irmsLib) {
   Serial.print(" Entrada: ");
   Serial.print(analogRead(portRead));
 
   Serial.print(" Wats: ");
-  Serial.print(irms * 127);	       // Apparent power
+  Serial.print(irms * 127);         // Apparent power
   Serial.print(" IRMS: ");
-  Serial.print(irms);		       // Irms
+  Serial.print(irms);          // Irms
 
   Serial.print(" ICAL: ");
   Serial.print(ICAL);
@@ -48,13 +62,6 @@ void loop()
   Serial.print(" Wats LIB: ");
   Serial.println(irmsLib * 127);
 }
-
-double calcIrmsLib() {
-    double irmsCalc = (emon1.calcIrms(1480));
-    if (irmsCalc < 0) {
-      return 0;
-    } else { return irmsCalc; }
-  }
 
 double calcIrms(unsigned int Number_of_Samples) {
    double irmsCalc;
@@ -86,7 +93,7 @@ double calcIrms(unsigned int Number_of_Samples) {
   I_RATIO = ICAL * ((SupplyVoltage/1000.0) / (4096));
   irmsCalc = (I_RATIO * sqrt(sumI / Number_of_Samples)); 
 
-  //Reset accumulators
+  //Reseta acumuladores
   sumI = 0;
 //--------------------------------------------------------------------------------------       
   if (irmsCalc < 0) { return 0; }
@@ -122,3 +129,5 @@ long readVcc() {
   return (3300);                                  //Guess that other un-supported architectures will be running a 3.3V!
  #endif
 }
+
+
