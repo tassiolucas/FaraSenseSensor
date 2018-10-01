@@ -1,8 +1,27 @@
-// Código do Sensor 
+#include "Arduino.h"
 
-#include "EmonLib.h"                   // Include Emon Library
-EnergyMonitor emon1;                   // Create an instance
+#include "EmonLib.h"                   // Inclui EmonLib (Biblioteca padrão do cálculo RMS)   
+#include <WiFi.h>
 #include <HTTPClient.h>
+#include <DNSServer.h>
+#include <WebServer.h>
+#include <WiFiManager.h>
+
+EnergyMonitor emon1; // Cria uma instância
+WiFiManager wifiManager;
+boolean shouldSaveConfig;
+
+#define SERIAL_SPEED 115200
+int ID_SENSOR = 1;
+
+#define LEDC_CHANNEL_0     0
+#define LEDC_TIMER_13_BIT  13
+#define LEDC_BASE_FREQ     5000
+#define LED_PIN            2
+
+int brightness = 0;
+int fadeAmount = 5;
+unsigned long times;
 
 #define portRead 34
 float ICAL = 9.090909090909090;
@@ -11,21 +30,85 @@ int SupplyVoltage;
 double irms;
 float I_RATIO;
 
+int freq = 5000;
+int ledChannel = 0;
+int resolution = 8;
+
+// END POINT POST AWS
+#define apiUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor"
+HTTPClient http;
+
+// Arduino like analogWrite
+// value has to be between 0 and valueMax
+void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
+  // calculate duty, 8191 from 2 ^ 13 - 1
+  uint32_t duty = (8191 / valueMax) * _min(value, valueMax);
+
+  // write duty to LEDC
+  ledcWrite(channel, duty);
+}
+
 void setup()
-{  
-  Serial.begin(115200);
-  emon1.current(36, ICAL);             // Current: input pin, calibration.
+{ 
+  Serial.begin(SERIAL_SPEED);
+   ledcSetup(LEDC_CHANNEL_0, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
+   ledcAttachPin(LED_PIN, LEDC_CHANNEL_0);
+   ledcAnalogWrite(LEDC_CHANNEL_0, 255);  
+    emon1.current(portRead, ICAL);
+    wifiManager.setAPCallback(configModeCallback);
+  
+  if (!wifiManager.autoConnect("FARASENSE")) {
+    Serial.println("failed to connect and hit timeout");
+    //reset and try again, or maybe put it to deep sleep
+    ESP.restart();
+    delay(1000);
+  }
+  
+  delay(50);
+   ledcAnalogWrite(LEDC_CHANNEL_0, 0);
 }
 
 void loop()
 {
-  irms = calcIrms(4000);
-  double irmsLib = calcIrmsLib();  // Calculate Irms only
-  printAllValuesSensor(irms, irmsLib);
+  if(millis() > 5000) {
+      irms = calcIrms(4000);
+      double irmsLib = calcIrmsLib();  // Calculate Irms only
+      //debugValuesSensor(irms, irmsLib);
+      if (irms != 0) {
+        apiSendData(irms);
+      } else { Serial.println("Aguardando sensores...");  }
+  } else {
+    irms = calcIrms(4000);
+  }
+  
+  delay(1000);
 }
 
-void apiRequest() {
-  
+void apiSendData(double amper) {
+  ledcAnalogWrite(LEDC_CHANNEL_0, 255);
+  if(WiFi.status() == WL_CONNECTED) {
+    http.begin(apiUrlPOST);
+    http.addHeader("Content-Type", "text/plain");
+
+    String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"milliamper\":" + (amper*1000) + ", \"power\":" + (amper * 127) + "}";
+    
+    int httpResponseCode = http.POST(dataPost);
+    
+    if(httpResponseCode>0){
+      String response = http.getString();
+      Serial.println(httpResponseCode); 
+      Serial.println(response);          
+    }else{
+        Serial.print("Error on sending POST: ");
+        Serial.println(httpResponseCode);
+    }
+    
+    http.end();
+  } else {
+    Serial.print("Error in WiFi connection");
+    bool shouldSaveConfig = false ;
+  }
+  ledcAnalogWrite(LEDC_CHANNEL_0, 255);
 }
 
 double calcIrmsLib() {
@@ -35,30 +118,39 @@ double calcIrmsLib() {
     } else { return irmsCalc; }
 }
 
-void printAllValuesSensor(int irms, int irmsLib) {
-  Serial.print(" Entrada: ");
-  Serial.print(analogRead(portRead));
+void debugValuesSensor(double irms, double irmsLib) {
 
-  Serial.print(" Wats: ");
-  Serial.print(irms * 127);         // Apparent power
+//  Serial.print("ICAL: ");
+//  Serial.print(ICAL);
+//
+//  Serial.print(" I_RATIO: ");
+//  Serial.print(I_RATIO);
+//
+//  Serial.print(" Supply: ");
+//  Serial.print(SupplyVoltage);
+//
+//  Serial.print(" ADC_COUNTS: ");
+//  Serial.print(4096);
+
+  String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + irms + ", \"milliamper\":" + (irms*1000) + ", \"power\":" + (irms * 127) + "}";
+  Serial.print(dataPost);
+  
+  Serial.print(" Entrada: ");
+  Serial.print(portRead);
+  Serial.print(" R:");
+  Serial.print(analogRead(portRead));
+  
   Serial.print(" IRMS: ");
   Serial.print(irms);          // Irms
 
-  Serial.print(" ICAL: ");
-  Serial.print(ICAL);
-
-  Serial.print(" I_RATIO: ");
-  Serial.print(I_RATIO);
-
-  Serial.print(" Supply: ");
-  Serial.print(SupplyVoltage);
-
-  Serial.print(" ADC_COUNTS: ");
-  Serial.print(4096);
+  Serial.print(" MILLIAMPER: ");
+  Serial.print(irms * 1000);          // Irms
+  
+  Serial.print(" Wats: ");
+  Serial.print(irms * 127);         // Apparent power
 
   Serial.print(" Irms LIB: ");
   Serial.print(irmsLib);
-
   Serial.print(" Wats LIB: ");
   Serial.println(irmsLib * 127);
 }
@@ -93,11 +185,44 @@ double calcIrms(unsigned int Number_of_Samples) {
   I_RATIO = ICAL * ((SupplyVoltage/1000.0) / (4096));
   irmsCalc = (I_RATIO * sqrt(sumI / Number_of_Samples)); 
 
-  //Reseta acumuladores
+//Reseta acumuladores
   sumI = 0;
-//--------------------------------------------------------------------------------------       
-  if (irmsCalc < 0) { return 0; }
+//--------------------------------------------------------------------------------------  
+// VALOR PURO
+//  return irmsCalc;
+//-------------------------------------------------------------------------------------- 
+// VALOR TRATADO
+// Caso a corente aparente seja menor que o valor mínimo que o sensor lê, retorna 0
+  if (irmsCalc < 0.50) { return 0; }  
   else {  return irmsCalc; }
+}
+
+void blinkLedFade(int fadeAmount, int brightness) {
+  // set the brightness on LEDC channel 0
+  ledcAnalogWrite(LEDC_CHANNEL_0, brightness);
+
+  // change the brightness for next time through the loop:
+  brightness = brightness + fadeAmount;
+
+  // reverse the direction of the fading at the ends of the fade:
+  if (brightness <= 0 || brightness >= 255) {
+    fadeAmount = -fadeAmount;
+  }
+  // wait for 30 milliseconds to see the dimming effect
+  delay(30);
+}
+
+// callback notificando-nos da necessidade de salvar config 
+void  saveConfigCallback () {
+  Serial. println ( " Deve salvar config " );
+  shouldSaveConfig = true ;
+}
+
+void  configModeCallback (WiFiManager * myWiFiManager) {
+  Serial. println ("Modo de configuração entrado: " );
+  Serial. println (WiFi. softAPIP ());
+
+  Serial. println (myWiFiManager-> getConfigPortalSSID ());
 }
 
 long readVcc() {
@@ -129,5 +254,3 @@ long readVcc() {
   return (3300);                                  //Guess that other un-supported architectures will be running a 3.3V!
  #endif
 }
-
-
