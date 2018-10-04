@@ -64,8 +64,8 @@ void setup()
     delay(1000);
   }
   
-  delay(50);
-   ledcAnalogWrite(LEDC_CHANNEL_0, 0);
+  delay(1000);
+  ledcAnalogWrite(LEDC_CHANNEL_0, 0);
 }
 
 void loop()
