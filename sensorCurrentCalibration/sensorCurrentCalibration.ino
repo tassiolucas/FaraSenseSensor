@@ -10,8 +10,11 @@
 #include <WiFiManager.h>
 
 #define SERIAL_SPEED 115200
-
 #define STATUS 2
+
+boolean DEBUG_MODE = true;
+double batteryLevel = 0;
+const int portBattery = 33;
 
 // Instancias das bibliotecas utilizadas
 EnergyMonitor emon1;
@@ -24,6 +27,8 @@ double sampleI, offsetI, filteredI, sumI, sqI;
 int SupplyVoltage;
 double irms;
 float I_RATIO;
+double totalAmper;
+int countTotal;
 
 #define LEDC_TIMER_13_BIT  13
 #define LEDC_BASE_FREQ     5000
@@ -54,6 +59,7 @@ int fadeInterval = 50;
 
 // END POINT POST AWS
 #define apiUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor"
+#define batteryUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor/battery"
 HTTPClient http;
 
 // Configurando a porta analógica para escrita de 0 até o valor máximo de 4096
@@ -75,6 +81,10 @@ void setup()
 
   pinMode(portRead, INPUT);
   adcAttachPin(portRead);
+
+  pinMode(portBattery, INPUT);
+  adcAttachPin(portBattery);
+  
   //  analogReadResolution(10);
   //  analogSetAttenuation(ADC_6db); // Alterando resolução da porta de leitura
 
@@ -88,6 +98,9 @@ void setup()
     delay(1000);
   }
 
+  totalAmper = 0;
+  countTotal = 0;
+
   delay(1000);
   ledcAnalogWrite(STATUS, 0);
 }
@@ -97,15 +110,42 @@ void loop()
 {
   unsigned long currentMillis = millis();
   loops++;
+  batteryLevel = analogRead(portRead);
 
   if (currentMillis > 5000) {
     irms = calcIrms(4000);
     double irmsLib = calcIrmsLib();  // Calculate Irms only
+    batteryLevel = analogRead(portBattery);
+            
     // debugValuesSensor(irms, irmsLib);
     if (irms != 0) {
-      if (currentMillis - lastMillis > 5000) {
-        apiSendData(irms);
+      
+      totalAmper = totalAmper + irms;
+      countTotal++;
+        
+      if (currentMillis - lastMillis > 60000) {
+        double dataSend = (totalAmper / countTotal);
 
+        if (DEBUG_MODE) {
+          Serial.print("Contagem: ");
+          Serial.print(countTotal);
+          Serial.print(" Total: ");
+          Serial.print(totalAmper);
+          Serial.print(" Média dos sensores (min:) ");
+          Serial.print(dataSend);
+          Serial.print(" Ultima medida:");
+          Serial.print(irms);
+          Serial.print(" Bateria: ");
+          Serial.println(batteryLevel);
+        }
+
+        apiSendData(dataSend);
+        apiSendBattery(batteryLevel);
+
+        countTotal = 0;
+        totalAmper = 0;
+        dataSend= 0;
+        
         lastMillis = currentMillis;
         loops = 0;
       }
@@ -118,8 +158,7 @@ void loop()
   } else {
     irms = calcIrms(4000);
   }
-
-  // delay(1000);
+  
 }
 
 void doTheFade(unsigned long thisMillis) {
@@ -170,6 +209,34 @@ void apiSendData(double amper) {
     http.addHeader("Content-Type", "text/plain");
 
     String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
+
+    int httpResponseCode = http.POST(dataPost);
+
+    if (httpResponseCode > 0) {
+      String response = http.getString();
+      Serial.print("POST: ");
+      Serial.print(httpResponseCode);
+      Serial.print("  ");
+      Serial.println(response);
+    } else {
+      Serial.print("Error on sending POST: ");
+      Serial.println(httpResponseCode);
+    }
+
+    http.end();
+  } else {
+    Serial.println("Error in WiFi connection");
+    bool shouldSaveConfig = false;
+    doBlinkError();
+  }
+}
+
+void apiSendBattery(double level) {
+  if (WiFi.status() == WL_CONNECTED) {
+    http.begin(batteryUrlPOST);
+    http.addHeader("Content-Type", "text/plain");
+
+    String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"level\":" + level + "}";
 
     int httpResponseCode = http.POST(dataPost);
 
