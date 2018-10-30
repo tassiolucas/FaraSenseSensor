@@ -1,25 +1,33 @@
+// Programa: FaraSenseSensor
+// Autor: Tassio Lucas
+// Descricao: No README.md
 
-// Importação das Bibliotecas Utilizadas
+// Importacao das Bibliotecas Utilizadas
 #include "esp32-hal-adc.h"
 #include "Arduino.h"
-#include "EmonLib.h" // Inclui EmonLib (Biblioteca padrão do cálculo RMS) - (Funcionamento irregular em placas 3.3v)
+#include "EmonLib.h" // Inclui EmonLib (Biblioteca padrÃ£o do calculo RMS) - (Funcionamento irregular em placas 3.3v)
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
 
+// Define config da plataforma Arduino
 #define SERIAL_SPEED 115200
 #define STATUS 2
-
 boolean DEBUG_MODE = true;
+const int TRIGGER_PIN = 13;
+
+// Ferramentas da Bateria
 double batteryLevel = 0;
 const int portBattery = 33;
 
 // Instancias das bibliotecas utilizadas
+HTTPClient http;
 EnergyMonitor emon1;
 WiFiManager wifiManager;
 
+// ConfiguraÃ§Ãµes do sensor de corrente
 int ID_SENSOR = 1;
 const int portRead = 36;
 float ICAL = 9.090909090909090;
@@ -33,13 +41,12 @@ int countTotal;
 #define LEDC_TIMER_13_BIT  13
 #define LEDC_BASE_FREQ     5000
 
-
 unsigned long loops = 0;
 long lastMillis = 0;
 
 boolean blinkWaiting = false;
 
-// define directions for LED fade
+// Configuracoes de Brilho do LED Status
 #define UP 0
 #define DOWN 1
 // constants for min and max PWM
@@ -57,12 +64,13 @@ unsigned long previousFadeMillis;
 // How fast to increment?
 int fadeInterval = 50;
 
+// ConfiguraÃ§Ãµes de funcionamento da API
 // END POINT POST AWS
 #define apiUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor"
 #define batteryUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor/battery"
-HTTPClient http;
+String dataPost;
 
-// Configurando a porta analógica para escrita de 0 até o valor máximo de 4096
+// Configurando a porta analogica para escrita de 0 atual o valor maximo de 4096
 void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
   // calculate duty, 8191 from 2 ^ 13 - 1
   uint32_t duty = (8191 / valueMax) * _min(value, valueMax);
@@ -71,31 +79,34 @@ void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
   ledcWrite(channel, duty);
 }
 
-// Início do programa //
+// Inicio do programa //
 void setup()
-{
+{  
   Serial.begin(SERIAL_SPEED);
   ledcSetup(STATUS, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
   ledcAttachPin(STATUS, STATUS);
-  ledcAnalogWrite(STATUS, 255);
+  ledcAnalogWrite(STATUS, 255); 
 
   pinMode(portRead, INPUT);
   adcAttachPin(portRead);
 
   pinMode(portBattery, INPUT);
   adcAttachPin(portBattery);
+
+  pinMode(TRIGGER_PIN, INPUT_PULLUP);
   
   //  analogReadResolution(10);
-  //  analogSetAttenuation(ADC_6db); // Alterando resolução da porta de leitura
+  //  analogSetAttenuation(ADC_6db); // Alterando resolucao da porta de leitura
 
   emon1.current(portRead, ICAL);
-  wifiManager.setAPCallback(configModeCallback);
 
+  wifiManager.setAPCallback(configModeCallback);
+    
   if (!wifiManager.autoConnect("FARASENSE")) {
-    Serial.println("Failed to connect and hit timeout");
+    delay(1000);
+    Serial.println("Falha na conexao, tempo maximo atingido.");
     //reset and try again, or maybe put it to deep sleep
     ESP.restart();
-    delay(1000);
   }
 
   totalAmper = 0;
@@ -105,12 +116,14 @@ void setup()
   ledcAnalogWrite(STATUS, 0);
 }
 
-// Loop do programa, após o início //
+// Loop do programa, apenas o inicio //
 void loop()
 {
   unsigned long currentMillis = millis();
   loops++;
   batteryLevel = analogRead(portRead);
+
+  handleButton();
 
   if (currentMillis > 5000) {
     irms = calcIrms(4000);
@@ -131,7 +144,7 @@ void loop()
           Serial.print(countTotal);
           Serial.print(" Total: ");
           Serial.print(totalAmper);
-          Serial.print(" Média dos sensores (min:) ");
+          Serial.print(" Media dos sensores (min:) ");
           Serial.print(dataSend);
           Serial.print(" Ultima medida:");
           Serial.print(irms);
@@ -236,7 +249,7 @@ void apiSendBattery(double level) {
     http.begin(batteryUrlPOST);
     http.addHeader("Content-Type", "text/plain");
 
-    String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"level\":" + level + "}";
+    dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"level\":" + level + "}";
 
     int httpResponseCode = http.POST(dataPost);
 
@@ -270,6 +283,7 @@ double calcIrmsLib() {
 
 void debugValuesSensor(double irms, double irmsLib) {
 
+  //  Monitoramento inicial das funcoes do sensor
   //  Serial.print("ICAL: ");
   //  Serial.print(ICAL);
   //
@@ -282,8 +296,8 @@ void debugValuesSensor(double irms, double irmsLib) {
   //  Serial.print(" ADC_COUNTS: ");
   //  Serial.print(4096);
 
-  //String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
-  //Serial.print(dataPost);
+  // String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
+  // Serial.print(dataPost);
 
   Serial.print(" Entrada: ");
   Serial.print(portRead);
@@ -339,7 +353,7 @@ double calcIrms(unsigned int Number_of_Samples) {
   //  return irmsCalc;
   //--------------------------------------------------------------------------------------
   // VALOR TRATADO
-  // Caso a corente aparente seja menor que o valor mínimo que o sensor lê, retorna 0
+  // Caso a corente aparente seja menor que o valor m que o sensor la, retorna 0
   if (irmsCalc < 0.50) {
     return 0;
   }
@@ -349,9 +363,23 @@ double calcIrms(unsigned int Number_of_Samples) {
 }
 
 void  configModeCallback (WiFiManager * myWiFiManager) {
-  Serial. println ("Modo de configuração entrado: " );
+  Serial. println ("Em modo de configuracao..." );
   Serial. println (WiFi. softAPIP ());
   Serial. println (myWiFiManager-> getConfigPortalSSID ());
+}
+
+void handleButton(){
+  int debounce = 50;
+  if (digitalRead(TRIGGER_PIN) == LOW ){
+    delay(debounce);
+    if(digitalRead(TRIGGER_PIN) == LOW ){
+      // WiFiManager wifiManager;
+      wifiManager.resetSettings();
+      wifiManager.setBreakAfterConfig(true);
+      delay(1000);
+      ESP.restart();
+    }
+  }
 }
 
 long readVcc() {
