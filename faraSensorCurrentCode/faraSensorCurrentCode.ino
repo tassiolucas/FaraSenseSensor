@@ -5,7 +5,7 @@
 // Importacao das Bibliotecas Utilizadas
 #include "esp32-hal-adc.h"
 #include "Arduino.h"
-#include "EmonLib.h" // Inclui EmonLib (Biblioteca padrÃ£o do calculo RMS) - (Funcionamento irregular em placas 3.3v)
+#include "EmonLib.h" // Inclui EmonLib (Biblioteca padrao do calculo IRMS) - (Funcionamento irregular em placas 3.3v)
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <DNSServer.h>
@@ -27,7 +27,7 @@ HTTPClient http;
 EnergyMonitor emon1;
 WiFiManager wifiManager;
 
-// ConfiguraÃ§Ãµes do sensor de corrente
+// Configuracoes do sensor de corrente
 int ID_SENSOR = 1;
 const int portRead = 36;
 float ICAL = 9.090909090909090;
@@ -46,7 +46,7 @@ long lastMillis = 0;
 
 boolean blinkWaiting = false;
 
-// Configuracoes de Brilho do LED Status
+// Configuracoes de Brilho do LED de Status
 #define UP 0
 #define DOWN 1
 // constants for min and max PWM
@@ -64,7 +64,7 @@ unsigned long previousFadeMillis;
 // How fast to increment?
 int fadeInterval = 50;
 
-// ConfiguraÃ§Ãµes de funcionamento da API
+// Configuracoes de funcionamento da API AWS
 // END POINT POST AWS
 #define apiUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor"
 #define batteryUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor/battery"
@@ -105,7 +105,7 @@ void setup()
   if (!wifiManager.autoConnect("FARASENSE")) {
     delay(1000);
     Serial.println("Falha na conexao, tempo maximo atingido.");
-    //reset and try again, or maybe put it to deep sleep
+    // Redefine e tenta novamente, (ou talvez coloca em sono profundo [documentacao])
     ESP.restart();
   }
 
@@ -127,7 +127,7 @@ void loop()
 
   if (currentMillis > 5000) {
     irms = calcIrms(4000);
-    double irmsLib = calcIrmsLib();  // Calculate Irms only
+    double irmsLib = calcIrmsLib();  // Calcula IRMS somente
     batteryLevel = analogRead(portBattery);
             
     // debugValuesSensor(irms, irmsLib);
@@ -142,18 +142,18 @@ void loop()
         if (DEBUG_MODE) {
           Serial.print("Contagem: ");
           Serial.print(countTotal);
-          Serial.print(" Total: ");
+          Serial.print("| Total: ");
           Serial.print(totalAmper);
-          Serial.print(" Media dos sensores (min:) ");
+          Serial.print("| Media dos sensores: ");
           Serial.print(dataSend);
-          Serial.print(" Ultima medida:");
+          Serial.print("| Ultima medida (amper): ");
           Serial.print(irms);
-          Serial.print(" Bateria: ");
-          Serial.println(batteryLevel);
+          // Serial.print(" Bateria: ");
+          // Serial.println(batteryLevel);
         }
 
         apiSendData(dataSend);
-        apiSendBattery(batteryLevel);
+        // apiSendBattery(batteryLevel);
 
         countTotal = 0;
         totalAmper = 0;
@@ -164,7 +164,7 @@ void loop()
       }
       doTheFade(currentMillis);
     } else {
-      Serial.println("Aguardando sensores...");
+      Serial.println("Aguardando leitura dos sensores...");
       doBlinkWaiting();
       delay(1000);
     }
