@@ -16,7 +16,7 @@
 #define SERIAL_SPEED 115200
 #define STATUS 2
 boolean DEBUG_MODE = true;
-const int TRIGGER_PIN = 13;
+const int TRIGGER_PIN = 0;
 
 // Ferramentas da Bateria
 double batteryLevel = 0;
@@ -105,7 +105,7 @@ void setup()
   if (!wifiManager.autoConnect("FARASENSE")) {
     delay(1000);
     Serial.println("Falha na conexao, tempo maximo atingido.");
-    // Redefine e tenta novamente, (ou talvez coloca em sono profundo [documentacao])
+    // Redefine e tenta novamente
     ESP.restart();
   }
 
@@ -119,6 +119,8 @@ void setup()
 // Loop do programa, apenas o inicio //
 void loop()
 {
+  checkWifiConnection();
+  
   unsigned long currentMillis = millis();
   loops++;
   batteryLevel = analogRead(portRead);
@@ -147,7 +149,7 @@ void loop()
           Serial.print("| Media dos sensores: ");
           Serial.print(dataSend);
           Serial.print("| Ultima medida (amper): ");
-          Serial.print(irms);
+          Serial.println(irms);
           // Serial.print(" Bateria: ");
           // Serial.println(batteryLevel);
         }
@@ -172,6 +174,22 @@ void loop()
     irms = calcIrms(4000);
   }
   
+}
+
+void checkWifiConnection() {
+  if (WiFi.status() != WL_CONNECTED) {
+    wifiManager.autoConnect("FARASENSE");
+    delay(1000);
+    Serial.println("Falha na conexao, tempo maximo atingido.");
+    ESP.restart();
+  }
+}
+
+void forceNetworkRestart() {
+    wifiManager.autoConnect("FARASENSE");
+    delay(1000);
+    Serial.println("Falha no envio para API, reiniciando a conexão...");
+    ESP.restart();
 }
 
 void doTheFade(unsigned long thisMillis) {
@@ -234,12 +252,12 @@ void apiSendData(double amper) {
     } else {
       Serial.print("Error on sending POST: ");
       Serial.println(httpResponseCode);
+      forceNetworkRestart();
     }
 
     http.end();
   } else {
     Serial.println("Error in WiFi connection");
-    bool shouldSaveConfig = false;
     doBlinkError();
   }
 }
@@ -262,12 +280,12 @@ void apiSendBattery(double level) {
     } else {
       Serial.print("Error on sending POST: ");
       Serial.println(httpResponseCode);
+      forceNetworkRestart();
     }
 
     http.end();
   } else {
     Serial.println("Error in WiFi connection");
-    bool shouldSaveConfig = false;
     doBlinkError();
   }
 }
@@ -353,8 +371,10 @@ double calcIrms(unsigned int Number_of_Samples) {
   //  return irmsCalc;
   //--------------------------------------------------------------------------------------
   // VALOR TRATADO
-  // Caso a corente aparente seja menor que o valor m que o sensor la, retorna 0
+  // Caso a corente aparente seja menor que o valor que o sensor detecta, retorna 0
   if (irmsCalc < 0.50) {
+    Serial.print("Sensor: ");
+    Serial.println(irmsCalc);
     return 0;
   }
   else {
@@ -370,12 +390,10 @@ void  configModeCallback (WiFiManager * myWiFiManager) {
 
 void handleButton(){
   int debounce = 50;
-  if (digitalRead(TRIGGER_PIN) == LOW ){
+  if (digitalRead(TRIGGER_PIN) == LOW){
     delay(debounce);
-    if(digitalRead(TRIGGER_PIN) == LOW ){
-      // WiFiManager wifiManager;
-      wifiManager.resetSettings();
-      wifiManager.setBreakAfterConfig(true);
+    if(digitalRead(TRIGGER_PIN) == LOW){
+      WiFi.disconnect(false,true);
       delay(1000);
       ESP.restart();
     }
