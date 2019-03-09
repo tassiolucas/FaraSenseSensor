@@ -5,26 +5,28 @@
 // Importacao das Bibliotecas Utilizadas
 #include "esp32-hal-adc.h"
 #include "Arduino.h"
-#include "EmonLib.h" // Inclui EmonLib (Biblioteca padrao do calculo IRMS) - (Funcionamento irregular em placas 3.3v)
+// #include "EmonLib.h" // Inclui EmonLib (Biblioteca padrao do calculo IRMS) - (Funcionamento irregular em placas 3.3v)
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <DNSServer.h>
 #include <WebServer.h>
 #include <WiFiManager.h>
 
+#include <BLEDevice.h>
+#include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
+
 // Define config da plataforma Arduino
 #define SERIAL_SPEED 115200
 #define STATUS 2
 boolean DEBUG_MODE = true;
+boolean BLE_DEBUG_MODE = false;
 const int TRIGGER_PIN = 0;
-
-// Ferramentas da Bateria
-double batteryLevel = 0;
-const int portBattery = 33;
 
 // Instancias das bibliotecas utilizadas
 HTTPClient http;
-EnergyMonitor emon1;
+// EnergyMonitor emon1;
 WiFiManager wifiManager;
 
 // Configuracoes do sensor de corrente
@@ -49,17 +51,17 @@ boolean blinkWaiting = false;
 // Configuracoes de Brilho do LED de Status
 #define UP 0
 #define DOWN 1
-// constants for min and max PWM
+// Constantes para minimo e maximo do PWM
 const int minPWM = 0;
 const int maxPWM = 255;
-// State Variable for Fade Direction
+// Estado variavel para direcao do face
 byte fadeDirection = UP;
-// Global Fade Value
-// but be bigger than byte and signed, for rollover
+// Valor de fade global
+// mas seja maior que byte e assinado, para rollover
 int fadeValue = 0;
-// How smooth to fade?
+// Suavidade do desaparecer do fade
 byte fadeIncrement = 5;
-// millis() timing Variable, just for fading
+// Em millis() timing Variable, just for fading
 unsigned long previousFadeMillis;
 // How fast to increment?
 int fadeInterval = 50;
@@ -67,8 +69,28 @@ int fadeInterval = 50;
 // Configuracoes de funcionamento da API AWS
 // END POINT POST AWS
 #define apiUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor"
-#define batteryUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor/battery"
+// #define batteryUrlPOST "https://p4b2zvd5pi.execute-api.us-east-1.amazonaws.com/dev/current_sensor/battery"
 String dataPost;
+
+// Configuracoes do Bluetooth
+BLEServer* bleServer = NULL;
+BLECharacteristic *bleCharacteristic = NULL;
+bool deviceConnected = false;
+bool oldDeviceConnected = false;
+#define SERVICE_UUID "129fecfc-3f58-11e9-b210-d663bd873d93" // Servico UART de UUID
+#define CHARACTERISTIC_UUID "129fefae-3f58-11e9-b210-d663bd873d93"
+
+class BleServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* bleServer) {
+    deviceConnected = true;
+    Serial.println("BLE Conectado!");  
+  };
+
+  void onDisconnect(BLEServer* bleServer) {
+    deviceConnected = false;
+    Serial.println("BLE Desconectado!");    
+  }
+};
 
 // Configurando a porta analogica para escrita de 0 atual o valor maximo de 4096
 void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
@@ -83,6 +105,8 @@ void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
 void setup()
 {  
   Serial.begin(SERIAL_SPEED);
+    
+  // Definição do led de status
   ledcSetup(STATUS, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
   ledcAttachPin(STATUS, STATUS);
   ledcAnalogWrite(STATUS, 255); 
@@ -90,27 +114,42 @@ void setup()
   pinMode(portRead, INPUT);
   adcAttachPin(portRead);
 
-  pinMode(portBattery, INPUT);
-  adcAttachPin(portBattery);
-
   pinMode(TRIGGER_PIN, INPUT_PULLUP);
   
   //  analogReadResolution(10);
   //  analogSetAttenuation(ADC_6db); // Alterando resolucao da porta de leitura
 
-  emon1.current(portRead, ICAL);
-
   wifiManager.setAPCallback(configModeCallback);
     
   if (!wifiManager.autoConnect("FARASENSE")) {
     delay(1000);
-    Serial.println("Falha na conexao, tempo maximo atingido.");
+    Serial.println("FALHA NA CONEXAO, TEMPO MAXIMO ATINGIDO.");
     // Redefine e tenta novamente
     ESP.restart();
   }
+                                   
+  // emon1.current(portRead, ICAL); // Setando biblioteca padrao de leitura do sensor (nao funciona bem para o ESP32)
 
   totalAmper = 0;
   countTotal = 0;
+
+  // Configuração inicial Bluetooth
+  BLEDevice::init("FaraSense Sensor 1"); // Cria dispositivo BLE, dando um nome
+  bleServer = BLEDevice::createServer(); // Configura dispositivo como servidor BLE
+  bleServer -> setCallbacks(new BleServerCallbacks());
+  BLEService *bleService = bleServer -> createService(SERVICE_UUID);
+  bleCharacteristic = bleService -> createCharacteristic(
+                                          CHARACTERISTIC_UUID,
+                                          BLECharacteristic::PROPERTY_NOTIFY
+                                          );
+  bleCharacteristic ->addDescriptor(new BLE2902());
+  bleService -> start(); 
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(false);
+  pAdvertising->setMinPreferred(0x0);
+  BLEDevice::startAdvertising();
+  Serial.println("BLE pronto!");
 
   delay(1000);
   ledcAnalogWrite(STATUS, 0);
@@ -119,76 +158,87 @@ void setup()
 // Loop do programa, apenas o inicio //
 void loop()
 {
-  checkWifiConnection();
-  
-  unsigned long currentMillis = millis();
-  loops++;
-  batteryLevel = analogRead(portRead);
-
-  handleButton();
-
-  if (currentMillis > 5000) {
-    irms = calcIrms(4000);
-    double irmsLib = calcIrmsLib();  // Calcula IRMS somente
-    batteryLevel = analogRead(portBattery);
-            
-    // debugValuesSensor(irms, irmsLib);
-    if (irms != 0) {
+    unsigned long currentMillis = millis();
+    loops++;
+    
+    handleButton();
+    
+    if (currentMillis > 5000) {
       
-      totalAmper = totalAmper + irms;
-      countTotal++;
-        
-      if (currentMillis - lastMillis > 60000) {
-        double dataSend = (totalAmper / countTotal);
+      irms = calcIrms(4000);
+   
+      // double irmsLib = calcIrmsLib();  // Calcula IRMS somente (Biblioteca padrão do sensor)   
+      // debugValuesSensor(irms, irmsLib);
 
-        if (DEBUG_MODE) {
-          Serial.print("Contagem: ");
-          Serial.print(countTotal);
-          Serial.print("| Total: ");
-          Serial.print(totalAmper);
-          Serial.print("| Media dos sensores: ");
-          Serial.print(dataSend);
-          Serial.print("| Ultima medida (amper): ");
-          Serial.println(irms);
-          // Serial.print(" Bateria: ");
-          // Serial.println(batteryLevel);
+      if (irms != 0) {
+        if (deviceConnected) {   
+          char bleValue[10];
+          sprintf(bleValue, "%4.4f", irms);
+
+          if (BLE_DEBUG_MODE) {
+            Serial.print("BLE VALUE: ");
+            Serial.println(bleValue);
+          }
+                                      
+          bleCharacteristic -> setValue(bleValue); 
+          bleCharacteristic -> notify();
         }
 
-        apiSendData(dataSend);
-        // apiSendBattery(batteryLevel);
+        if (!deviceConnected && oldDeviceConnected) {
+          delay(500);
+          bleServer->startAdvertising(); // restart advertising
+          Serial.println("start advertising");
+          oldDeviceConnected = deviceConnected;
+        }
 
-        countTotal = 0;
-        totalAmper = 0;
-        dataSend= 0;
-        
-        lastMillis = currentMillis;
-        loops = 0;
+        if (deviceConnected && !oldDeviceConnected) {
+          oldDeviceConnected = deviceConnected;
+        }
       }
-      doTheFade(currentMillis);
-    } else {
-      Serial.println("Aguardando leitura dos sensores...");
-      doBlinkWaiting();
-      delay(1000);
-    }
-  } else {
-    irms = calcIrms(4000);
-  }
+      
+      if (irms != 0) {    
+        
+        totalAmper = totalAmper + irms;
+        countTotal++;
+        
+        if (currentMillis - lastMillis > 60000) {
+          double dataSend = (totalAmper / countTotal);
   
-}
-
-void checkWifiConnection() {
-  if (WiFi.status() != WL_CONNECTED) {
-    wifiManager.autoConnect("FARASENSE");
-    delay(1000);
-    Serial.println("Falha na conexao, tempo maximo atingido.");
-    ESP.restart();
-  }
+          if (DEBUG_MODE) {
+            Serial.print("Contagem: ");
+            Serial.print(countTotal);
+            Serial.print(" | Total: ");
+            Serial.print(totalAmper);
+            Serial.print(" | Media dos sensores: ");
+            Serial.print(dataSend);
+            Serial.print(" | Ultima medida (amper): ");
+            Serial.println(irms);
+          }
+  
+          apiSendData(dataSend);
+  
+          countTotal = 0;
+          totalAmper = 0;
+          dataSend = 0;
+          
+          lastMillis = currentMillis;
+          loops = 0;
+        }
+        doTheFade(currentMillis);
+      } else {      
+        Serial.println("Aguardando leitura dos sensores...");
+        doBlinkWaiting();
+        delay(1000);
+      }
+    } else {
+      irms = calcIrms(4000);
+    }
 }
 
 void forceNetworkRestart() {
     wifiManager.autoConnect("FARASENSE");
     delay(1000);
-    Serial.println("Falha no envio para API, reiniciando a conexão...");
+    Serial.println("FALHA NO ENVIO PARA API, REINICIADO A CONEXAO...");
     ESP.restart();
 }
 
@@ -241,33 +291,8 @@ void apiSendData(double amper) {
 
     String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
 
-    int httpResponseCode = http.POST(dataPost);
-
-    if (httpResponseCode > 0) {
-      String response = http.getString();
-      Serial.print("POST: ");
-      Serial.print(httpResponseCode);
-      Serial.print("  ");
-      Serial.println(response);
-    } else {
-      Serial.print("Error on sending POST: ");
-      Serial.println(httpResponseCode);
-      forceNetworkRestart();
-    }
-
-    http.end();
-  } else {
-    Serial.println("Error in WiFi connection");
-    doBlinkError();
-  }
-}
-
-void apiSendBattery(double level) {
-  if (WiFi.status() == WL_CONNECTED) {
-    http.begin(batteryUrlPOST);
-    http.addHeader("Content-Type", "text/plain");
-
-    dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"level\":" + level + "}";
+    Serial.print("DATAPOST: ");
+    Serial.println(dataPost);
 
     int httpResponseCode = http.POST(dataPost);
 
@@ -278,45 +303,19 @@ void apiSendBattery(double level) {
       Serial.print("  ");
       Serial.println(response);
     } else {
-      Serial.print("Error on sending POST: ");
+      Serial.print("ERRO AO ENVIAR O POST...");
       Serial.println(httpResponseCode);
       forceNetworkRestart();
     }
 
     http.end();
   } else {
-    Serial.println("Error in WiFi connection");
+    Serial.println("ERROR NA CONEXAO WIFI...");
     doBlinkError();
-  }
-}
-
-double calcIrmsLib() {
-  double irmsCalc = (emon1.calcIrms(1480));
-  if (irmsCalc < 0) {
-    return 0;
-  } else {
-    return irmsCalc;
   }
 }
 
 void debugValuesSensor(double irms, double irmsLib) {
-
-  //  Monitoramento inicial das funcoes do sensor
-  //  Serial.print("ICAL: ");
-  //  Serial.print(ICAL);
-  //
-  //  Serial.print(" I_RATIO: ");
-  //  Serial.print(I_RATIO);
-  //
-  //  Serial.print(" Supply: ");
-  //  Serial.print(SupplyVoltage);
-  //
-  //  Serial.print(" ADC_COUNTS: ");
-  //  Serial.print(4096);
-
-  // String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
-  // Serial.print(dataPost);
-
   Serial.print(" Entrada: ");
   Serial.print(portRead);
   Serial.print(" R:");
@@ -373,8 +372,6 @@ double calcIrms(unsigned int Number_of_Samples) {
   // VALOR TRATADO
   // Caso a corente aparente seja menor que o valor que o sensor detecta, retorna 0
   if (irmsCalc < 0.50) {
-    Serial.print("Sensor: ");
-    Serial.println(irmsCalc);
     return 0;
   }
   else {
