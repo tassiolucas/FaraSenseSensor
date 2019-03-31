@@ -20,8 +20,8 @@
 // Define config da plataforma Arduino
 #define SERIAL_SPEED 115200
 #define STATUS 2
-boolean DEBUG_MODE = true;
-boolean BLE_DEBUG_MODE = false;
+boolean DEBUG_MODE = false;
+boolean BLE_DEBUG_MODE = true;
 const int TRIGGER_PIN = 0;
 
 // Instancias das bibliotecas utilizadas
@@ -195,7 +195,13 @@ void loop()
           oldDeviceConnected = deviceConnected;
         }
       }
-      
+
+      if (DEBUG_MODE) {
+        Serial.print("Ultima medida (amper): ");
+        Serial.println(irms);
+        delay(2500);
+      }
+            
       if (irms != 0) {    
         
         totalAmper = totalAmper + irms;
@@ -203,19 +209,17 @@ void loop()
         
         if (currentMillis - lastMillis > 60000) {
           double dataSend = (totalAmper / countTotal);
-  
-          if (DEBUG_MODE) {
-            Serial.print("Contagem: ");
-            Serial.print(countTotal);
-            Serial.print(" | Total: ");
-            Serial.print(totalAmper);
-            Serial.print(" | Media dos sensores: ");
-            Serial.print(dataSend);
-            Serial.print(" | Ultima medida (amper): ");
-            Serial.println(irms);
-          }
-  
+             
           apiSendData(dataSend);
+          
+          if (false) {
+              Serial.print("Ultima medida (amper): ");
+              Serial.print(irms);
+              Serial.print(" | Contagem: ");
+              Serial.print(countTotal);
+              Serial.print(" | Total: ");
+              Serial.println(totalAmper);
+          }
   
           countTotal = 0;
           totalAmper = 0;
