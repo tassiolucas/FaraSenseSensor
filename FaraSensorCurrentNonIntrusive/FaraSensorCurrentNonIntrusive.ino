@@ -21,7 +21,7 @@
 #define SERIAL_SPEED 115200
 #define STATUS 2
 boolean DEBUG_MODE = false;
-boolean BLE_DEBUG_MODE = true;
+boolean BLE_DEBUG_MODE = false;
 const int TRIGGER_PIN = 0;
 
 // Instancias das bibliotecas utilizadas
@@ -140,13 +140,14 @@ void setup()
   BLEService *bleService = bleServer -> createService(SERVICE_UUID);
   bleCharacteristic = bleService -> createCharacteristic(
                                           CHARACTERISTIC_UUID,
-                                          BLECharacteristic::PROPERTY_NOTIFY
+                                          BLECharacteristic::PROPERTY_WRITE
+                                          // BLECharacteristic::PROPERTY_NOTIFY
                                           );
   bleCharacteristic ->addDescriptor(new BLE2902());
   bleService -> start(); 
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(false);
+  pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x0);
   BLEDevice::startAdvertising();
   Serial.println("BLE pronto!");
