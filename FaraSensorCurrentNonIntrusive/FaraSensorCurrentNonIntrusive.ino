@@ -1,6 +1,6 @@
 // Programa: FaraSenseSensor
 // Autor: Tassio Lucas
-// Descricao: No README.md
+// Descricao & Documentacao: No README.md
 
 // Importacao das Bibliotecas Utilizadas
 #include "esp32-hal-adc.h"
