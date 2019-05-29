@@ -21,10 +21,21 @@
 #include <BLE2902.h>
 
 // Define config da plataforma Arduino
-#define SERIAL_SPEED 115200
+#define SERIAL_SPEED  115200
+#define TX_PIN  1
+bool TX_IS_ON = false;
+
+#if TX_IS_ON
+#undef STATUS
+#define STATUS 1
+
+#else
+#undef STATUS
 #define STATUS 2
+#endif
+
 #define LEDC_TIMER_13_BIT  13 // Tempo LED
-#define LEDC_BASE_FREQ 5000 // Tempo FREQ
+#define LEDC_BASE_FREQ  5000 // Tempo FREQ
 boolean DEBUG_MODE = false;
 boolean BLE_DEBUG_MODE = false;
 const int TRIGGER_PIN = 0;
@@ -36,10 +47,10 @@ WiFiManager wifiManager;
 
 // Configuracoes do sensor de corrente
 int ID_SENSOR = 1;
-#define ACS_MPY 15.41  
+#define ACS_MPY  15.41  
 float I_RATIO;
 float ICAL = 9.090909090909090;
-const int portRead = 36;
+const int portRead = 35;
 double sampleI, offsetI, filteredI, sumI, sqI;
 int SupplyVoltage;
 double irms;
@@ -87,6 +98,7 @@ bool oldDeviceConnected = false;
 class BleServerCallbacks: public BLEServerCallbacks {
   void onConnect(BLEServer* bleServer) {
     deviceConnected = true;
+    
     Serial.println("BLE Conectado!");  
   };
 
@@ -105,8 +117,14 @@ void ledcAnalogWrite(uint8_t channel, uint32_t value, uint32_t valueMax = 255) {
   ledcWrite(channel, duty);
 }
 
-void setup() { 
+void setup() {
+  // DEBUG MODE ? 
+  TX_IS_ON = digitalRead(TX_PIN);
+  
   Serial.begin(SERIAL_SPEED);
+  Serial.println(digitalRead(TX_PIN));
+  Serial.println(TX_IS_ON);
+
   // Definição do led de status
   ledcSetup(STATUS, LEDC_BASE_FREQ, LEDC_TIMER_13_BIT);
   ledcAttachPin(STATUS, STATUS);
@@ -125,7 +143,9 @@ void setup() {
 
   if (!wifiManager.autoConnect("FARASENSE")) {
     delay(1000);
-    Serial.println("FALHA NA CONEXAO, TEMPO MAXIMO ATINGIDO.");
+    if (DEBUG_MODE) {
+      Serial.println("FALHA NA CONEXAO, TEMPO MAXIMO ATINGIDO.");
+    }
     // Redefine e tenta novamente
     ESP.restart();
   }
@@ -149,8 +169,9 @@ void setup() {
   pAdvertising->setScanResponse(true);
   pAdvertising->setMinPreferred(0x0);
   BLEDevice::startAdvertising();
-  Serial.println("BLE pronto!");
-
+  if (DEBUG_MODE) {
+    Serial.println("BLE pronto!");
+  }
   delay(1000);
   ledcAnalogWrite(STATUS, 0);
 }
@@ -177,9 +198,9 @@ void loop()
           char bleValue[10];
           sprintf(bleValue, "%4.4f", irms);
 
-          if (BLE_DEBUG_MODE) {
+          if (BLE_DEBUG_MODE && DEBUG_MODE) {
             Serial.print("BLE VALUE: ");
-            Serial.println(bleValue);
+            Serial.print(bleValue);
           }
                                       
           bleCharacteristic -> setValue(bleValue); 
@@ -189,7 +210,9 @@ void loop()
         if (!deviceConnected && oldDeviceConnected) {
           delay(500);
           bleServer->startAdvertising(); // restart advertising
-          Serial.println("start advertising");
+          if (DEBUG_MODE) {
+            Serial.println("start advertising");
+          }
           oldDeviceConnected = deviceConnected;
         }
 
@@ -199,7 +222,11 @@ void loop()
       }
 
       if (DEBUG_MODE) {
-        Serial.print("Ultima medida (amper): ");
+        Serial.print("Porta ");
+        Serial.print(portRead);
+        Serial.print(": ");
+        Serial.print(analogRead(portRead));
+        Serial.print("  - Ultima medida (amper): ");
         Serial.println(irms);
         delay(2500);
       }
@@ -214,9 +241,7 @@ void loop()
              
           apiSendData(dataSend);
           
-          if (false) {
-              Serial.print("Ultima medida (amper): ");
-              Serial.print(irms);
+          if (DEBUG_MODE) {
               Serial.print(" | Contagem: ");
               Serial.print(countTotal);
               Serial.print(" | Total: ");
@@ -231,8 +256,10 @@ void loop()
           loops = 0;
         }
         doTheFade(currentMillis);
-      } else {      
-        Serial.println("Aguardando leitura dos sensores...");
+      } else {
+        if (DEBUG_MODE) {      
+          Serial.println("Aguardando leitura dos sensores...");
+        }
         doBlinkWaiting();
         delay(1000);
       }
@@ -305,40 +332,52 @@ void apiSendData(double amper) {
 
     String dataPost = (String) "{\"id\":" + ID_SENSOR + ", \"amper\":" + amper + ", \"power\":" + (amper * 127) + "}";
 
-    Serial.print("DATAPOST: ");
-    Serial.println(dataPost);
-
+    if (DEBUG_MODE) {
+      Serial.print("DATAPOST: ");
+      Serial.println(dataPost);
+    }
+    
     int httpResponseCode = http.POST(dataPost);
 
     if (httpResponseCode > 0) {
       String response = http.getString();
-      Serial.print("POST: ");
-      Serial.print(httpResponseCode);
-      Serial.print("  ");
-      Serial.println(response);
+      if (DEBUG_MODE) {
+        Serial.print("POST: ");
+        Serial.print(httpResponseCode);
+        Serial.print("  ");
+        Serial.println(response);
+      }
     } else {
-      Serial.print("ERRO AO ENVIAR O POST...");
-      Serial.println(httpResponseCode);
+      if (DEBUG_MODE) {
+        Serial.print("ERRO AO ENVIAR O POST...");
+        Serial.println(httpResponseCode);
+      }
       forceNetworkRestart();
     }
 
     http.end();
   } else {
-    Serial.println("ERROR NA CONEXAO WIFI...");
+    if (DEBUG_MODE) {
+      Serial.println("ERROR NA CONEXAO WIFI...");
+    }
     doBlinkError();
   }
 }
 
 void  configModeCallback (WiFiManager * myWiFiManager) {
-  Serial. println ("Em modo de configuracao..." );
-  Serial. println (WiFi. softAPIP ());
-  Serial. println (myWiFiManager-> getConfigPortalSSID ());
+  if (DEBUG_MODE) {
+    Serial.println ("Em modo de configuracao..." );
+    Serial.println (WiFi. softAPIP ());
+    Serial.println (myWiFiManager-> getConfigPortalSSID ());
+  }
 }
 
 void forceNetworkRestart() {
     wifiManager.autoConnect("FARASENSE");
     delay(1000);
-    Serial.println("FALHA NO ENVIO PARA API, REINICIADO A CONEXAO...");
+    if (DEBUG_MODE) {
+      Serial.println("FALHA NO ENVIO PARA API, REINICIADO A CONEXAO...");
+    }
     ESP.restart();
 }
 
@@ -420,19 +459,21 @@ long readVcc() {
 
 // FUNCOES DEBUG
 void debugValuesSensor(double irms, double irmsLib) {
-  Serial.print(" Entrada: ");
-  Serial.print(portRead);
-  Serial.print(" R:");
-  Serial.print(analogRead(portRead));
-
-  Serial.print(" IRMS: ");
-  Serial.print(irms);          // Irms
-
-  Serial.print(" Wats: ");
-  Serial.print(irms * 127);         // Apparent power
-
-  Serial.print(" Irms LIB: ");
-  Serial.print(irmsLib);
-  Serial.print(" Wats LIB: ");
-  Serial.println(irmsLib * 127);
+  if (DEBUG_MODE) {
+    Serial.print(" Entrada: ");
+    Serial.print(portRead);
+    Serial.print(" R:");
+    Serial.print(analogRead(portRead));
+  
+    Serial.print(" IRMS: ");
+    Serial.print(irms);          // Irms
+  
+    Serial.print(" Wats: ");
+    Serial.print(irms * 127);         // Apparent power
+  
+    Serial.print(" Irms LIB: ");
+    Serial.print(irmsLib);
+    Serial.print(" Wats LIB: ");
+    Serial.println(irmsLib * 127);
+  }
 }
