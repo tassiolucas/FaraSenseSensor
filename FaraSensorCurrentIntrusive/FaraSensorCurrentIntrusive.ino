@@ -352,7 +352,7 @@ void apiSendData(double amper) {
         Serial.print("ERRO AO ENVIAR O POST...");
         Serial.println(httpResponseCode);
       }
-      forceNetworkRestart();
+      // forceNetworkRestart();
     }
 
     http.end();
