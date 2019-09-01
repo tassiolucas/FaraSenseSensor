@@ -189,8 +189,9 @@ void loop()
       irms = emon1.calcIrms(1996);
       
       // irms = calcIrms(4000); // Deprecado
-   
-      // double irmsLib = calcIrmsLib();  // Calcula IRMS somente (Biblioteca padrão do sensor)   
+
+      // Calcula IRMS somente (Biblioteca padrão do sensor)
+      // double irmsLib = calcIrmsLib();     
       // debugValuesSensor(irms, irmsLib);
 
       if (irms != 0) {
